@@ -1,7 +1,7 @@
 """DataSampler module."""
 
 import numpy as np
-
+import torch
 
 class DataSampler(object):
     """DataSampler samples the conditional vector and corresponding data for CTGAN."""
@@ -154,3 +154,33 @@ class DataSampler(object):
         id_ += condition_info['value_id']
         vec[:, id_] = 1
         return vec
+    
+    def __getitem__(self, idx):
+        """[summary]
+
+        Args:
+            idx ([type]): [description]
+
+        Returns:
+            cond, mask, discrete_column_id, category_id_in_col # TODO just as a placeholder right now, incorrect docstring
+        """
+        condvec = self.sample_condvec(1)
+        if condvec is None:
+            c1, c2, m1, col, opt = [], [], [], [], []
+            real = self.sample_data(1, None, None)
+        else:
+            c1, m1, col, opt = condvec
+            c1 = torch.from_numpy(c1)
+            m1 = torch.from_numpy(m1)
+            # fakez = torch.cat([fakez, c1], dim=1)
+
+            real = self.sample_data(
+                1, col[0], opt[0])
+            c2 = c1[0]
+        real = np.float32(real)
+        return real[0], c1, c2, m1
+    
+    def __len__(self):
+        shape = self._data.shape
+        return shape[0]
+        
