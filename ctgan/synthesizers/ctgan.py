@@ -9,6 +9,7 @@ from packaging import version
 from torch import optim
 from torch.nn import BatchNorm1d, Dropout, LeakyReLU, Linear, Module, ReLU, Sequential, functional
 from pytorch_lightning import LightningModule
+from pytorch_lightning import Trainer
 from torch.utils.data.dataloader import DataLoader
 from ctgan.data_sampler import DataSampler
 from ctgan.data_transformer import DataTransformer
@@ -144,7 +145,7 @@ class CTGANSynthesizer(BaseSynthesizer):
     def __init__(self, embedding_dim=128, generator_dim=(256, 256), discriminator_dim=(256, 256),
                  generator_lr=2e-4, generator_decay=1e-6, discriminator_lr=2e-4,
                  discriminator_decay=1e-6, batch_size=500, discriminator_steps=1,
-                 log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True):
+                 log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True, **kwargs): #TODO: can we circumvent the unnecessary table_data, categoricals arguments?
 
         assert batch_size % 2 == 0
 
@@ -718,13 +719,20 @@ class LightningCTGANSynthesizer(LightningModule):
         
     
     def fit(self, train_data, discrete_columns=tuple(), epochs=None):
+        # if torch.cuda.is_available():
+        #     accelerator = 'gpu'
+        # else:
+        #     accelerator = 'cpu'
+        
+        # trainer = Trainer(accelerator=accelerator, strategy="ddp", benchmark=True, max_epochs = self._epochs)
+        # trainer.fit(self)
         return True
     
     
     
     
     def train_dataloader(self):
-        self.train_dataloader = DataLoader(self._data_sampler, batch_size=self._batch_size, pin_memory=True) # TODO: pass num_workers argument
+        self.train_dataloader = DataLoader(self._data_sampler, batch_size=self._batch_size, pin_memory=True, drop_last=True) # TODO: pass num_workers argument
         return self.train_dataloader
     
     def training_step(self, batch, batch_idx, **kwargs):
