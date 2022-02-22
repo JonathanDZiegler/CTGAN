@@ -702,20 +702,6 @@ class LightningCTGANSynthesizer(LightningModule):
 
         return [optimizerD, optimizerG], []
 
-    # def prepare_data(self) -> None:
-    #     train_data = self.dataset
-    #     discrete_columns=tuple()
-    #     # """Fit the CTGAN Synthesizer models to the training data.
-
-    #     # Args:
-    #     #     train_data (numpy.ndarray or pandas.DataFrame):
-    #     #         Training Data. It must be a 2-dimensional numpy array or a pandas.DataFrame.
-    #     #     discrete_columns (list-like):
-    #     #         List of discrete columns to be used to generate the Conditional
-    #     #         Vector. If ``train_data`` is a Numpy array, this list should
-    #     #         contain the integer indices of the columns. Otherwise, if it is
-    #     #         a ``pandas.DataFrame``, this list should contain the column names.
-    #     # """
         
     
     def fit(self, train_data, discrete_columns=tuple(), epochs=None):
@@ -728,7 +714,40 @@ class LightningCTGANSynthesizer(LightningModule):
         # trainer.fit(self)
         return True
     
-    
+    def forward(self, x):
+        # sample(self, n, condition_column=None, condition_value=None)
+        z, c = x
+        condition_column = ['BMI_CAT']
+        condition_value = c
+        if condition_column is not None and condition_value is not None:
+            condition_info = self._transformer.convert_column_name_value_to_id(
+                condition_column, condition_value)
+            global_condition_vec = self._data_sampler.generate_cond_from_condition_column_info(
+                condition_info, self._batch_size)
+        else:
+            global_condition_vec = None
+
+        data = []
+        mean = torch.zeros(self._batch_size, self._embedding_dim)
+
+        fakez = z
+
+        if global_condition_vec is not None:
+            condvec = global_condition_vec.copy()
+        else:
+            condvec = self._data_sampler.sample_original_condvec(self._batch_size)
+
+        if condvec is None:
+            pass
+        else:
+            c1 = condvec
+            c1 = torch.from_numpy(c1)
+            fakez = torch.cat([fakez, c1], dim=1)
+
+        fake = self._generator(fakez)
+        fakeact = self._apply_activate(fake)
+
+        return fakeact
     
     
     def train_dataloader(self):
@@ -835,8 +854,8 @@ class LightningCTGANSynthesizer(LightningModule):
         self.manual_backward(loss_g)
         optimizerG.step()
         
-        self.log('Gen Loss', loss_g, prog_bar=self._verbose)
-        self.log('Disc Loss', loss_d, prog_bar=self._verbose)
+        self.log('Gen Loss', loss_g, prog_bar=True)
+        self.log('Disc Loss', loss_d, prog_bar=True)
         # if self._verbose:
         #     print(f"Epoch {i+1}, Loss G: {loss_g.detach().cpu(): .4f}, "
         #             f"Loss D: {loss_d.detach().cpu(): .4f}",
