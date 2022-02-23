@@ -14,6 +14,7 @@ from torch.utils.data.dataloader import DataLoader
 from ctgan.data_sampler import DataSampler
 from ctgan.data_transformer import DataTransformer
 from ctgan.synthesizers.base import BaseSynthesizer
+from loguru import logger
 
 
 class Discriminator(Module):
@@ -145,7 +146,7 @@ class CTGANSynthesizer(BaseSynthesizer):
     def __init__(self, embedding_dim=128, generator_dim=(256, 256), discriminator_dim=(256, 256),
                  generator_lr=2e-4, generator_decay=1e-6, discriminator_lr=2e-4,
                  discriminator_decay=1e-6, batch_size=500, discriminator_steps=1,
-                 log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True, **kwargs): #TODO: can we circumvent the unnecessary table_data, categoricals arguments?
+                 log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True, **kwargs):  # TODO: can we circumvent the unnecessary table_data, categoricals arguments?
 
         assert batch_size % 2 == 0
 
@@ -483,6 +484,7 @@ class CTGANSynthesizer(BaseSynthesizer):
             self._generator.to(self._device)
 
 
+@logger.catch
 class LightningCTGANSynthesizer(LightningModule):
     """Conditional Table GAN Synthesizer.
 
@@ -532,7 +534,8 @@ class LightningCTGANSynthesizer(LightningModule):
     def __init__(self, embedding_dim=128, generator_dim=(256, 256), discriminator_dim=(256, 256),
                  generator_lr=2e-4, generator_decay=1e-6, discriminator_lr=2e-4,
                  discriminator_decay=1e-6, batch_size=500, discriminator_steps=1,
-                 log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True, categoricals = tuple(), table_data=None):
+                 log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True, 
+                 categoricals=tuple(), table_data=None):
         super().__init__()
         self.save_hyperparameters()
         assert batch_size % 2 == 0
@@ -558,7 +561,7 @@ class LightningCTGANSynthesizer(LightningModule):
 
         train_data = table_data
         discrete_columns = categoricals
-        
+
         self._validate_discrete_columns(train_data, discrete_columns)
 
         epochs = self._epochs
@@ -572,7 +575,7 @@ class LightningCTGANSynthesizer(LightningModule):
             train_data,
             self._transformer.output_info_list,
             self._log_frequency)
-        
+
         data_dim = self._transformer.output_dimensions
 
         self._generator = Generator(
@@ -702,18 +705,16 @@ class LightningCTGANSynthesizer(LightningModule):
 
         return [optimizerD, optimizerG], []
 
-        
-    
     def fit(self, train_data, discrete_columns=tuple(), epochs=None):
         # if torch.cuda.is_available():
         #     accelerator = 'gpu'
         # else:
         #     accelerator = 'cpu'
-        
+
         # trainer = Trainer(accelerator=accelerator, strategy="ddp", benchmark=True, max_epochs = self._epochs)
         # trainer.fit(self)
         return True
-    
+
     def forward(self, x):
         # sample(self, n, condition_column=None, condition_value=None)
         z, c = x
@@ -748,14 +749,19 @@ class LightningCTGANSynthesizer(LightningModule):
         fakeact = self._apply_activate(fake)
 
         return fakeact
-    
-    
+
+    def forward_batch(self, batch):
+        z_batch, c_batch = batch
+        output = [self.forward((z_batch[idx], c_batch[idx])) for idx in range(z_batch.shape[0])]
+        return torch.vstack(output)
+
     def train_dataloader(self):
-        self.train_dataloader = DataLoader(self._data_sampler, batch_size=self._batch_size, pin_memory=True, drop_last=True) # TODO: pass num_workers argument
+        self.train_dataloader = DataLoader(self._data_sampler, batch_size=self._batch_size,
+                                           pin_memory=True, drop_last=True)  # TODO: pass num_workers argument
         return self.train_dataloader
-    
+
     def training_step(self, batch, batch_idx, **kwargs):
-    # def fit(self, train_data, discrete_columns=tuple(), epochs=None):
+        # def fit(self, train_data, discrete_columns=tuple(), epochs=None):
         mean = torch.zeros(self._batch_size, self._embedding_dim, device=self.device)
         std = mean + 1
 
@@ -763,7 +769,7 @@ class LightningCTGANSynthesizer(LightningModule):
 
         # steps_per_epoch = max(len(train_data) // self._batch_size, 1)
         # for i in range(epochs):
-            # for id_ in range(steps_per_epoch):
+        # for id_ in range(steps_per_epoch):
 
         # train discriminator
         # for n in range(self._discriminator_steps):
@@ -784,15 +790,15 @@ class LightningCTGANSynthesizer(LightningModule):
         #     real = self._data_sampler.sample_data(
         #         self._batch_size, col[perm], opt[perm])
         #     c2 = c1[perm]
-        
+
         real, c1, c2, m1 = batch
-        
-        if len(c1)==0:
+
+        if len(c1) == 0:
             c1 = None
-            
+
         if c1 is not None:
             fakez = torch.cat([fakez, c1], dim=1)
-        
+
         fake = self._generator(fakez)
         fakeact = self._apply_activate(fake)
 
@@ -830,7 +836,7 @@ class LightningCTGANSynthesizer(LightningModule):
         #     c1 = torch.from_numpy(c1)
         #     m1 = torch.from_numpy(m1)
         #     fakez = torch.cat([fakez, c1], dim=1)
-        
+
         if c1 is not None:
             fakez = torch.cat([fakez, c1], dim=1)
 
@@ -853,13 +859,9 @@ class LightningCTGANSynthesizer(LightningModule):
         # loss_g.backward()
         self.manual_backward(loss_g)
         optimizerG.step()
-        
+
         self.log('Gen Loss', loss_g, prog_bar=True)
         self.log('Disc Loss', loss_d, prog_bar=True)
-        # if self._verbose:
-        #     print(f"Epoch {i+1}, Loss G: {loss_g.detach().cpu(): .4f}, "
-        #             f"Loss D: {loss_d.detach().cpu(): .4f}",
-        #             flush=True)
 
     def sample(self, n, condition_column=None, condition_value=None):
         """Sample data similar to the training data.
