@@ -482,8 +482,8 @@ class CTGANSynthesizer(BaseSynthesizer):
         self._device = device
         if self._generator is not None:
             self._generator.to(self._device)
-
-
+            
+            
 @logger.catch
 class LightningCTGANSynthesizer(LightningModule):
     """Conditional Table GAN Synthesizer.
@@ -534,7 +534,7 @@ class LightningCTGANSynthesizer(LightningModule):
     def __init__(self, embedding_dim=128, generator_dim=(256, 256), discriminator_dim=(256, 256),
                  generator_lr=2e-4, generator_decay=1e-6, discriminator_lr=2e-4,
                  discriminator_decay=1e-6, batch_size=500, discriminator_steps=1,
-                 log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True, 
+                 log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True,
                  categoricals=tuple(), table_data=None, data_dim=None, transformer=None, data_sampler=None):
         super().__init__()
         self.save_hyperparameters()
@@ -575,10 +575,10 @@ class LightningCTGANSynthesizer(LightningModule):
                 train_data,
                 self._transformer.output_info_list,
                 self._log_frequency)
-    
+
         data_dim = self._transformer.output_dimensions
         self.data_dim = data_dim
-        
+
         self._generator = Generator(
             self._embedding_dim + self._data_sampler.dim_cond_vec(),
             self._generator_dim,
@@ -729,8 +729,8 @@ class LightningCTGANSynthesizer(LightningModule):
         else:
             global_condition_vec = None
 
-        data = []
-        mean = torch.zeros(self._batch_size, self._embedding_dim)
+        # data = []
+        # mean = torch.zeros(self._batch_size, self._embedding_dim)
 
         fakez = z
 
@@ -754,7 +754,7 @@ class LightningCTGANSynthesizer(LightningModule):
     def forward_batch(self, batch):
         z_batch, c_batch = batch
         c_batch = c_batch.unsqueeze(dim=1)
-        output = [self.forward((z_batch[idx:idx+1], c_batch[idx:idx+1])) for idx in range(z_batch.shape[0])]
+        output = [self.forward((z_batch[idx:idx + 1], c_batch[idx:idx + 1])) for idx in range(z_batch.shape[0])]
         return torch.vstack(output)
 
     def train_dataloader(self):
@@ -772,8 +772,8 @@ class LightningCTGANSynthesizer(LightningModule):
         # for id_ in range(steps_per_epoch):
 
         # train discriminator
-        #fakez = kwargs['input_noise']
-        #if fakez is None:
+        # fakez = kwargs['input_noise']
+        # if fakez is None:
         mean = torch.zeros(self._batch_size, self._embedding_dim, device=self.device)
         std = mean + 1
         # for n in range(self._discriminator_steps):
