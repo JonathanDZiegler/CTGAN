@@ -535,7 +535,7 @@ class LightningCTGANSynthesizer(LightningModule):
                  generator_lr=2e-4, generator_decay=1e-6, discriminator_lr=2e-4,
                  discriminator_decay=1e-6, batch_size=500, discriminator_steps=1,
                  log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True, 
-                 categoricals=tuple(), table_data=None):
+                 categoricals=tuple(), table_data=None, data_dim=None, transformer=None, data_sampler=None):
         super().__init__()
         self.save_hyperparameters()
         assert batch_size % 2 == 0
@@ -555,29 +555,30 @@ class LightningCTGANSynthesizer(LightningModule):
         self._epochs = epochs
         self.pac = pac
 
-        self._transformer = None
-        self._data_sampler = None
+        self._transformer = transformer
+        self._data_sampler = data_sampler
         self._generator = None
 
         train_data = table_data
         discrete_columns = categoricals
 
-        self._validate_discrete_columns(train_data, discrete_columns)
-
         epochs = self._epochs
 
-        self._transformer = DataTransformer()
-        self._transformer.fit(train_data, discrete_columns)
+        if self._transformer is None:
+            self._transformer = DataTransformer()
+            self._validate_discrete_columns(train_data, discrete_columns)
+            self._transformer.fit(train_data, discrete_columns)
 
-        train_data = self._transformer.transform(train_data)
-
-        self._data_sampler = DataSampler(
-            train_data,
-            self._transformer.output_info_list,
-            self._log_frequency)
-
+            train_data = self._transformer.transform(train_data)
+        if self._data_sampler is None:
+            self._data_sampler = DataSampler(
+                train_data,
+                self._transformer.output_info_list,
+                self._log_frequency)
+    
         data_dim = self._transformer.output_dimensions
-
+        self.data_dim = data_dim
+        
         self._generator = Generator(
             self._embedding_dim + self._data_sampler.dim_cond_vec(),
             self._generator_dim,
@@ -752,7 +753,8 @@ class LightningCTGANSynthesizer(LightningModule):
 
     def forward_batch(self, batch):
         z_batch, c_batch = batch
-        output = [self.forward((z_batch[idx], c_batch[idx])) for idx in range(z_batch.shape[0])]
+        c_batch = c_batch.unsqueeze(dim=1)
+        output = [self.forward((z_batch[idx:idx+1], c_batch[idx:idx+1])) for idx in range(z_batch.shape[0])]
         return torch.vstack(output)
 
     def train_dataloader(self):
@@ -762,8 +764,6 @@ class LightningCTGANSynthesizer(LightningModule):
 
     def training_step(self, batch, batch_idx, **kwargs):
         # def fit(self, train_data, discrete_columns=tuple(), epochs=None):
-        mean = torch.zeros(self._batch_size, self._embedding_dim, device=self.device)
-        std = mean + 1
 
         optimizerD, optimizerG = self.optimizers()
 
@@ -772,6 +772,10 @@ class LightningCTGANSynthesizer(LightningModule):
         # for id_ in range(steps_per_epoch):
 
         # train discriminator
+        #fakez = kwargs['input_noise']
+        #if fakez is None:
+        mean = torch.zeros(self._batch_size, self._embedding_dim, device=self.device)
+        std = mean + 1
         # for n in range(self._discriminator_steps):
         fakez = torch.normal(mean=mean, std=std)
 
