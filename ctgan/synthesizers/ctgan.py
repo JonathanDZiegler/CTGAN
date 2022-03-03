@@ -535,7 +535,8 @@ class LightningCTGANSynthesizer(LightningModule):
                  generator_lr=2e-4, generator_decay=1e-6, discriminator_lr=2e-4,
                  discriminator_decay=1e-6, batch_size=500, discriminator_steps=1,
                  log_frequency=True, verbose=False, epochs=300, pac=10, cuda=True,
-                 categoricals=tuple(), table_data=None, data_dim=None, transformer=None, data_sampler=None):
+                 categoricals=tuple(), table_data=None, data_dim=None, transformer=None, 
+                 data_sampler=None):
         super().__init__()
         self.save_hyperparameters()
         assert batch_size % 2 == 0
@@ -759,8 +760,53 @@ class LightningCTGANSynthesizer(LightningModule):
 
     def train_dataloader(self):
         self.train_dataloader = DataLoader(self._data_sampler, batch_size=self._batch_size,
-                                           pin_memory=True, drop_last=True)  # TODO: pass num_workers argument
+                                           pin_memory=True, drop_last=True, num_workers=8)  # TODO: pass num_workers argument
         return self.train_dataloader
+
+    def calculate_g_loss(self, fakez, c1, m1):
+        if c1 is not None:
+            fakez = torch.cat([fakez, c1], dim=1)
+
+        fake = self._generator(fakez)
+        fakeact = self._apply_activate(fake)
+
+        if c1 is not None:
+            y_fake = self.discriminator(torch.cat([fakeact, c1], dim=1))
+        else:
+            y_fake = self.discriminator(fakeact)
+
+        if c1 is None:
+            cross_entropy = 0
+        else:
+            cross_entropy = self._cond_loss(fake, c1, m1)
+
+        loss_g = -torch.mean(y_fake) + cross_entropy
+        log = {'Gen Loss': loss_g}
+        return loss_g, log
+
+    def calculate_d_loss(self, z, c1, real, c2):
+        if c1 is not None:
+            z = torch.cat([z, c1], dim=1)
+        fake = self._generator(z)
+        fakeact = self._apply_activate(fake)
+
+        # real = torch.from_numpy(real.astype('float32'))
+
+        if c1 is not None:
+            fake_cat = torch.cat([fakeact, c1], dim=1)
+            real_cat = torch.cat([real, c2], dim=1)
+        else:
+            real_cat = real
+            fake_cat = fakeact
+
+        y_fake = self.discriminator(fake_cat)
+        y_real = self.discriminator(real_cat)
+
+        pen = self.discriminator.calc_gradient_penalty(
+            real_cat, fake_cat, self.device, self.pac)
+        loss_d = -(torch.mean(y_real) - torch.mean(y_fake)) + pen
+        log = {'Disc Loss': loss_d}
+        return loss_d, log
 
     def training_step(self, batch, batch_idx, **kwargs):
         # def fit(self, train_data, discrete_columns=tuple(), epochs=None):
@@ -800,34 +846,10 @@ class LightningCTGANSynthesizer(LightningModule):
         if len(c1) == 0:
             c1 = None
 
-        if c1 is not None:
-            fakez = torch.cat([fakez, c1], dim=1)
-
-        fake = self._generator(fakez)
-        fakeact = self._apply_activate(fake)
-
-        # real = torch.from_numpy(real.astype('float32'))
-
-        if c1 is not None:
-            fake_cat = torch.cat([fakeact, c1], dim=1)
-            real_cat = torch.cat([real, c2], dim=1)
-        else:
-            real_cat = real
-            fake_cat = fakeact
-
-        y_fake = self.discriminator(fake_cat)
-        y_real = self.discriminator(real_cat)
-
-        pen = self.discriminator.calc_gradient_penalty(
-            real_cat, fake_cat, self.device, self.pac)
-        loss_d = -(torch.mean(y_real) - torch.mean(y_fake))
-
+        loss_d, log_d = self.calculate_d_loss(fakez, c1, real, c2)
         optimizerD.zero_grad()
-        # pen.backward(retain_graph=True)
-        # loss_d.backward()
-        self.manual_backward(pen + loss_d)
+        self.manual_backward(loss_d)
         optimizerD.step()
-        # disc_step loop goes to here ###################
 
         # train generator
         fakez = torch.normal(mean=mean, std=std)
@@ -841,31 +863,13 @@ class LightningCTGANSynthesizer(LightningModule):
         #     m1 = torch.from_numpy(m1)
         #     fakez = torch.cat([fakez, c1], dim=1)
 
-        if c1 is not None:
-            fakez = torch.cat([fakez, c1], dim=1)
-
-        fake = self._generator(fakez)
-        fakeact = self._apply_activate(fake)
-
-        if c1 is not None:
-            y_fake = self.discriminator(torch.cat([fakeact, c1], dim=1))
-        else:
-            y_fake = self.discriminator(fakeact)
-
-        if c1 is None:
-            cross_entropy = 0
-        else:
-            cross_entropy = self._cond_loss(fake, c1, m1)
-
-        loss_g = -torch.mean(y_fake) + cross_entropy
-
+        loss_g, log_g = self.calculate_g_loss(fakez, c1, m1)
         optimizerG.zero_grad()
-        # loss_g.backward()
         self.manual_backward(loss_g)
         optimizerG.step()
 
-        self.log('Gen Loss', loss_g, prog_bar=True)
-        self.log('Disc Loss', loss_d, prog_bar=True)
+        self.log('Gen Loss', log_g, prog_bar=True)
+        self.log('Disc Loss', log_d, prog_bar=True)
 
     def sample(self, n, condition_column=None, condition_value=None):
         """Sample data similar to the training data.
